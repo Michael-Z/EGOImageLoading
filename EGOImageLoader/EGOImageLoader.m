@@ -30,6 +30,14 @@
 
 static EGOImageLoader* __imageLoader;
 
+inline static NSData* noImageData(void) {
+	static NSData* noImageData = nil;
+	if (!noImageData) {
+		noImageData = [[@"NoImage" dataUsingEncoding:NSUTF8StringEncoding] retain];
+	}
+	return noImageData;
+}
+
 inline static NSString* keyForURL(NSURL* url) {
 	return [NSString stringWithFormat:@"EGOImageLoader-%u", [[url description] hash]];
 }
@@ -115,7 +123,12 @@ inline static NSString* keyForURL(NSURL* url) {
 - (UIImage*)imageForURL:(NSURL*)aURL shouldLoadWithObserver:(id<EGOImageLoaderObserver>)observer {
 	if(!aURL) return nil;
 	
-	UIImage* anImage = [[EGOCache currentCache] imageForKey:keyForURL(aURL)];
+	NSData* data = [[EGOCache currentCache] dataForKey:keyForURL(aURL)];
+	if ([data isEqualToData:noImageData()]) {
+		return nil;
+	}
+	
+	UIImage* anImage = [UIImage imageWithData:data];
 	
 	if(anImage) {
 		return anImage;
@@ -145,12 +158,18 @@ inline static NSString* keyForURL(NSURL* url) {
 	UIImage* anImage = [UIImage imageWithData:connection.responseData];
 	
 	if(!anImage) {
-		NSError* error = [NSError errorWithDomain:[connection.imageURL host] code:406 userInfo:nil];
-		NSNotification* notification = [NSNotification notificationWithName:kImageNotificationLoadFailed(connection.imageURL)
-																	 object:self
-																   userInfo:[NSDictionary dictionaryWithObjectsAndKeys:error,@"error",connection.imageURL,@"imageURL",nil]];
+		NSInteger statusCode = [(NSHTTPURLResponse*)connection.response statusCode];
+		if(statusCode >= 400 && statusCode < 500) {
+			[[EGOCache currentCache] setData:noImageData() forKey:keyForURL(connection.imageURL) withTimeoutInterval:604800];		
+		} else {
 		
-		[[NSNotificationCenter defaultCenter] performSelectorOnMainThread:@selector(postNotification:) withObject:notification waitUntilDone:YES];
+			NSError* error = [NSError errorWithDomain:[connection.imageURL host] code:406 userInfo:nil];
+			NSNotification* notification = [NSNotification notificationWithName:kImageNotificationLoadFailed(connection.imageURL)
+																		 object:self
+																	   userInfo:[NSDictionary dictionaryWithObjectsAndKeys:error,@"error",connection.imageURL,@"imageURL",nil]];
+			
+			[[NSNotificationCenter defaultCenter] performSelectorOnMainThread:@selector(postNotification:) withObject:notification waitUntilDone:YES];
+		}
 	} else {
 		[[EGOCache currentCache] setData:connection.responseData forKey:keyForURL(connection.imageURL) withTimeoutInterval:604800];
 		
@@ -176,7 +195,7 @@ inline static NSString* keyForURL(NSURL* url) {
 															   userInfo:[NSDictionary dictionaryWithObjectsAndKeys:error,@"error",connection.imageURL,@"imageURL",nil]];
 	
 	[[NSNotificationCenter defaultCenter] performSelectorOnMainThread:@selector(postNotification:) withObject:notification waitUntilDone:YES];
-
+	
 	[self cleanUpConnection:connection];
 }
 
